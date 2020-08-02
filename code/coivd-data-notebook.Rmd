@@ -21,6 +21,7 @@ library(ggplot2)
 
 
 ## Loading the COVID Data
+Data from https://github.com/nytimes/covid-19-data
 ```{r}
 covid_data <- read_csv(paste(here(), "data", "us-counties.csv", sep = "/"))
 ```
