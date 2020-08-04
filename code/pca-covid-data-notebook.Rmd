@@ -1,0 +1,131 @@
+---
+title: "Basic Principle Components Analysis on New York Times COVID-19 Data"
+author: "Payton Ratzliff"
+date: "04 August 2020"
+output: html_document
+---
+## DISCLAIMER:
+None of the information is this document should be used for the purposes of professionally diagnosing the state of COVID-19 in the United States - it was simply made to serve as an experiment in Principle Component Analysis using some particularly relevant and readily available data.
+
+## Background
+After attending the 6th Annual Summer Institute in Statistics for Big Data through the UW's School of Public Health, I wanted a chance to play around with some of the skills I learned on a simple project. The module on Unsupervised Learning was particularly interesting to me, and so I decided to play around with one of the concepts discussed there - Principle Components Analysis. For ease of availability and relevance, I found data on COVID-19 counts and deaths by county published by the New York Times (available at https://github.com/nytimes/covid-19-data)
+
+
+```{r setup, echo=TRUE, results = 'hide'}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+```
+
+## Libraries
+The below are code libraries used in this notebook for various tasks - mostly related to reading an cleaning data, with some graphing as well.
+```{r libraries, echo=TRUE, results = 'hide'}
+library(here)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+## Loading the COVID Data
+We start by loading the data provided from the New York Times. When this data was taken, records were reported for up to 2020/07/31 at the latest. This specific file lists cumulative case and death counts by county and state.
+```{r load_data}
+covid_data <- read_csv(paste(here(), "data", "us-counties.csv", sep = "/"))
+head(covid_data, n = 5)
+```
+
+## Covid Data: Widened by date
+Next, we widen the data. The below code takes the input data and widens it so that there is one row for each location, with columns for each of the reporting dates. This particular subset of the data contains the cumulative count of cases as the values for each date column - we have dropped the deaths information for this particular analysis. By rearranging the data this way, we get one record for each county in the dataset.
+```{r}
+covid_data_wide_cases <- covid_data %>% 
+  select(-c("deaths", "fips")) %>% 
+  # This is probably a bad way to fill NAs! A better idea would be: Fill all starting columns with 0, then for each following column, if it is "NA", replace it with the value in the previous column.
+  pivot_wider(names_from = "date", values_from = "cases", values_fill = 0) %>% 
+  mutate(location = paste(county, state, sep = ", ")) %>% 
+  select(-c("county", "state"))
+head(covid_data_wide_cases, n=5)
+```
+
+## PCA: Principle Components Analysis
+Now that we've rearranged our data for analysis by location, we can perform PCA (Principle Components Analysis) on the data. This algorithm will do its best to hone in on the columns that most explain the variance (or differences) in the individual data records. 
+```{r}
+case_by_date_data = covid_data_wide_cases %>% select(-location)
+#Apparently setting row names on tibbles is deprecated, so this may be bad...
+rownames(case_by_date_data) <- covid_data_wide_cases$location
+case_by_date_pca <- princomp(case_by_date_data)
+```
+
+## Visualizing the PCA from the widened data
+First, we can plot the amount of variance in the data explained by each component:
+```{r}
+screeplot(case_by_date_pca)
+```
+
+As the graph above shows, a large portion of the variance is explained by the first principle component. But what is the first principle component? Graphing the loadings, or the weight that each variable contributes to a component, helps us see that answer:
+
+Loadings - variables that contribute to PCA patterns
+```{r}
+
+par(mfrow=c(2,1))
+barplot(case_by_date_pca$loadings[,1],cex.names=.6,main="PC 1 Loadings")
+barplot(case_by_date_pca$loadings[,2],cex.names=.6,main="PC 2 Loadings")
+```
+
+As we can see above, the first Principle Component appears to mainly consist of steadily increasing weights from each progressive date. This makes sense - as time goes on, the number of cases in each location fluctuates, causing more variance. The second component is a bit harder to explain - the dates following June 30th (give or take a few days) appear to be assigned a negative weight. Frankly, I'm not entirely sure what this means - maybe someone could better explain it to me.
+
+At this point, I've begun to question my choice of PCA for an introductory analysis. Since the data is effectively time-series data, and the cumulative count on each day is dependent on the counts of days before it, PCA might not be the best option. However, there may still be some interesting points to discover, so we'll press onward for now.
+
+We can continue by plotting locations by the first two Principle Components to see what kinds of groups emerge.
+```{r, echo = TRUE}
+par(mfrow=c(2,1))
+PC1 <- as.matrix(x=case_by_date_pca$scores[,1]) 
+PC2 <- as.matrix(case_by_date_pca$scores[,2])
+
+PC <- data.frame(Location = row.names(case_by_date_data), PC1, PC2)
+ggplot(PC, aes(PC1, PC2)) + 
+  geom_text(aes(label = Location), size = 3) +
+  xlab("PC1") + 
+  ylab("PC2") + 
+  ggtitle("First Two Principal Components of Widened Covid Data")
+
+```
+
+In the graph above, we see that many of the locations group by low PC1 and PC2 values, with some particular outliers - New York City, New York; Los Angeles, California; and Cook, Illinois serving as points of particular note. For now, we'll focus on just the first Principle Component. Since we know that this component is determined by increasing weights for each successive date, we may expect that these cities have some of the higher counts on the last day of reporting. Let's take a look at the first few data points for this final day:
+
+```{r}
+covid_data_wide_cases %>% 
+  select(c("location", "2020-07-31")) %>% 
+  arrange(desc(`2020-07-31`)) %>% 
+  head(n = 10)
+```
+By glancing through the above table, it does seem that the outliers in this data set are those with the higher counts at the end of sampling. Some of this has to do with how the data is collected and reported. 
+
+For example, the New York times notes in their source for the data (again, https://github.com/nytimes/covid-19-data) that the cases for the five boroughs of New York City are all reported together under the "New York City" record - despite the fact that they also exist in separate counties. 
+
+Additionally, while Los Angeles county reports around 70K more cases than Miami-Dade county, it also has around 7 million more residents (based on a quick Google search: https://www.google.com/search?q=los+angeles+county+population&oq=los+angeles+county+population and https://www.google.com/search?&q=miami-dade+county+population). This could be important depending on the theoretical angle from which you are looking at the data - while there are seventy thousand more reported cases in Los Angeles county, that equates to an approximate infected rate of: 
+```{r}
+los_angeles_most_recent_count <- covid_data_wide_cases %>% 
+  select(c("location", "2020-07-31")) %>% 
+  filter(location == "Los Angeles, California")
+los_angeles_infected_rate <- los_angeles_most_recent_count$`2020-07-31`/10000000 * 100
+paste0(los_angeles_infected_rate, "%")
+```
+as opposed to Miami-Dade's infection rate of:
+```{r}
+miami_dade_most_recent_count <- covid_data_wide_cases %>% 
+  select(c("location", "2020-07-31")) %>% 
+  filter(location == "Los Angeles, California")
+miami_dade_infected_rate <- miami_dade_most_recent_count$`2020-07-31`/2700000 * 100
+paste(miami_dade_infected_rate, "%")
+```
+Clearly, multiple insights can be gleaned from this data depending on how one looks at it. Given that this has just been a simple project to explore some basic learnings, I'll leave deeper anaylsis of the data for a more professional setting.
+
+## Conclusion
+As seen above, Principle Components Analysis can help to quickly look for some simple relationships between different data points and draw some inferences. There are many different ways that the steps in this document could be improved upon - including, but not limited to:
+- Properly replacing N/A values in the data (for example, filling it with the same value as the previous day's count).
+- Converting the data from cumulative counts of cases per day to counts of new cases per day
+- Converting the data from cumulative counts of cases per day to infected rate per day.
+- ...and more
+
+However, as this has just been a simple exercise to apply some more general Data Analysis and Unsupervised Learning concepts, such improvements could be saved for a future exercise. Hopefully what I've shown here has been interesting and insightful in its own way!
+
+All code and data can be found at https://github.com/PaytonRatzliff/RProjects
